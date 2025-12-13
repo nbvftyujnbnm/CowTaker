@@ -124,7 +124,8 @@ const ScoreModal = ({ isOpen, onClose, players, myId }) => {
   const sortedPlayers = [...players].sort((a, b) => a.score - b.score);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+    // z-indexを 60 に設定して、GAME SETオーバーレイ(z-50)より上に表示させる
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
       <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
         <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center sticky top-0">
           <h3 className="font-bold text-slate-700 flex items-center gap-2">
@@ -205,7 +206,6 @@ export default function NimmtGame() {
         setGameState(data);
         
         // ラウンドが進んだらローカル選択をリセット
-        // (サーバー上のselectedCardがnullになったのを検知してリセットでも良いが、念のため)
         const myPlayer = data.players[user.uid];
         if (myPlayer && myPlayer.selectedCard === null) {
           setLocalSelectedCard(null);
@@ -237,7 +237,7 @@ export default function NimmtGame() {
         return () => clearTimeout(timer);
       }
     }
-  }, [gameState, user]); // loadingはdepsに入れない（ループ防止）
+  }, [gameState, user]); // loadingはdepsに入れない
 
   /* ------------------------------------------------------------------------
      Game Actions
@@ -325,19 +325,15 @@ export default function NimmtGame() {
     finally { setLoading(false); }
   };
 
-  // 1. ローカルでの仮選択（サーバーには送らない）
   const handleCardClick = (card) => {
     if (gameState.status !== 'playing') return;
-    // 既に確定済みの場合は操作無効
     if (gameState.players[user.uid].selectedCard !== null) return;
     setLocalSelectedCard(card);
   };
 
-  // 2. 確定ボタンでサーバー送信
   const confirmSelection = async () => {
     if (!localSelectedCard) return;
     
-    // 手札から仮削除して送信
     const myPlayer = gameState.players[user.uid];
     const newHand = myPlayer.hand.filter(c => c !== localSelectedCard);
     
@@ -346,12 +342,11 @@ export default function NimmtGame() {
       [`players.${user.uid}.hand`]: newHand,
       [`players.${user.uid}.selectedCard`]: localSelectedCard
     });
-    // ローカル選択状態はここでクリアせずとも、gameState更新でUIが変わる
   };
 
   const resolveTurn = async () => {
     if (!gameState || user.uid !== gameState.hostId) return;
-    setLoading(true); // ロック
+    setLoading(true);
 
     try {
       const lobbyRef = doc(db, 'artifacts', appId, 'public', 'data', 'lobbies', lobbyId);
@@ -409,7 +404,7 @@ export default function NimmtGame() {
         round: increment(1)
       });
     } catch (e) { console.error(e); }
-    finally { setLoading(false); } // アンロック
+    finally { setLoading(false); }
   };
 
   /* ------------------------------------------------------------------------
