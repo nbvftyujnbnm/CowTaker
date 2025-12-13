@@ -13,7 +13,7 @@ import {
   collection, 
   doc, 
   setDoc, 
-  getDoc, // 追加
+  getDoc,
   onSnapshot, 
   updateDoc, 
   deleteField,
@@ -27,17 +27,18 @@ import {
   Play, 
   AlertTriangle, 
   Trophy, 
-  RefreshCw,
-  Crown,
-  Info,
-  X,
-  List,
-  CheckCircle,
-  Loader,
-  MessageCircle,
-  Send,
-  LogOut,
-  Eye // 追加: 観戦アイコン
+  RefreshCw, 
+  Crown, 
+  Info, 
+  X, 
+  List, 
+  CheckCircle, 
+  Loader, 
+  MessageCircle, 
+  Send, 
+  LogOut, 
+  Eye,
+  ThumbsUp // 追加: 投票アイコン
 } from 'lucide-react';
 
 /* --------------------------------------------------------------------------
@@ -123,10 +124,8 @@ const Card = ({ number, type = 'hand', onClick, isSelected, isRevealed = true, s
 };
 
 // Modal: Scoreboard
-const ScoreModal = ({ isOpen, onClose, players, myId }) => {
+const ScoreModal = ({ isOpen, onClose, players, myId, votes }) => {
   if (!isOpen) return null;
-  // 観戦者を除外してスコア表示する（あるいは観戦者として表示する）
-  // ここでは全員表示するが、観戦者はスコア変動なし
   const sortedPlayers = [...players].sort((a, b) => a.score - b.score);
 
   return (
@@ -151,8 +150,9 @@ const ScoreModal = ({ isOpen, onClose, players, myId }) => {
                     {p.id === myId && <span className="text-[10px] bg-indigo-200 text-indigo-800 px-1 rounded">YOU</span>}
                     {p.isSpectator && <span className="text-[10px] bg-slate-200 text-slate-600 px-1 rounded flex items-center gap-0.5"><Eye size={10}/> 観戦</span>}
                   </div>
-                  <div className="text-xs text-slate-400">
+                  <div className="text-xs text-slate-400 flex items-center gap-2">
                     {p.isSpectator ? '観戦中' : (p.selectedCard ? '選択済み' : '考え中...')}
+                    {votes && votes[p.id] && <span className="text-green-600 flex items-center gap-0.5"><ThumbsUp size={10}/> 再戦希望</span>}
                   </div>
                 </div>
               </div>
@@ -322,17 +322,13 @@ export default function NimmtGame() {
   }, [showChat]);
 
   /* ------------------------------------------------------------------------
-     Host Auto-Resolution Logic (Modified for Spectators)
+     Host Auto-Resolution Logic
      ------------------------------------------------------------------------ */
   useEffect(() => {
     if (!gameState || !user) return;
     if (gameState.hostId === user.uid && gameState.status === 'playing') {
       const players = Object.values(gameState.players);
-      
-      // 観戦者を除いた「現役プレイヤー」を抽出
       const activePlayers = players.filter(p => !p.isSpectator);
-      
-      // 全員選択済みかチェック
       const allSelected = activePlayers.length > 0 && activePlayers.every(p => p.selectedCard !== null);
       
       if (allSelected && !loading) {
@@ -371,7 +367,8 @@ export default function NimmtGame() {
           }
         },
         rows: { 0: [], 1: [], 2: [], 3: [] },
-        chat: []
+        chat: [],
+        votes: {} // 投票用
       });
       setLobbyId(newLobbyId);
     } catch (e) { setError("作成エラー"); }
@@ -387,7 +384,6 @@ export default function NimmtGame() {
       const targetId = joinLobbyId.toUpperCase();
       const lobbyRef = doc(db, 'artifacts', appId, 'public', 'data', 'lobbies', targetId);
       
-      // 現在のステータスを確認して観戦者かどうかを判定
       const lobbySnap = await getDoc(lobbyRef);
       if (!lobbySnap.exists()) {
         setError("ロビーが見つかりません");
@@ -440,7 +436,7 @@ export default function NimmtGame() {
       const newRows = { 0: [deck.pop()], 1: [deck.pop()], 2: [deck.pop()], 3: [deck.pop()] };
       const updatedPlayers = { ...gameState.players };
       
-      // ゲーム開始時は全員プレイヤーとして参加
+      // ゲーム開始時は全員プレイヤーとして参加（観戦解除）
       Object.keys(updatedPlayers).forEach(pid => {
         const hand = [];
         for (let k = 0; k < INITIAL_HAND_SIZE; k++) if(deck.length) hand.push(deck.pop());
@@ -460,16 +456,27 @@ export default function NimmtGame() {
         rows: newRows,
         players: updatedPlayers,
         round: 1,
-        message: "ゲーム開始！"
+        message: "ゲーム開始！",
+        votes: {} // 投票リセット
       });
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
 
+  const castVote = async () => {
+    if (!lobbyId || !user) return;
+    try {
+      const lobbyRef = doc(db, 'artifacts', appId, 'public', 'data', 'lobbies', lobbyId);
+      await updateDoc(lobbyRef, {
+        [`votes.${user.uid}`]: true
+      });
+    } catch (e) { console.error(e); }
+  };
+
   const handleCardClick = (card) => {
     if (gameState.status !== 'playing') return;
     const myPlayer = gameState.players[user.uid];
-    if (myPlayer.isSpectator) return; // 観戦者は操作不可
+    if (myPlayer.isSpectator) return;
     if (myPlayer.selectedCard !== null) return;
     setLocalSelectedCard(card);
   };
@@ -512,7 +519,6 @@ export default function NimmtGame() {
       let currentPlayers = { ...gameState.players };
       let turnMessage = "";
       
-      // 観戦者を除外して処理
       const plays = Object.values(currentPlayers)
         .filter(p => !p.isSpectator && p.selectedCard !== null)
         .map(p => ({ uid: p.id, card: p.selectedCard }))
@@ -550,7 +556,6 @@ export default function NimmtGame() {
         player.selectedCard = null;
       }
 
-      // 手札判定も観戦者を除外
       const activePlayers = Object.values(currentPlayers).filter(p => !p.isSpectator);
       const isGameEnd = activePlayers.length > 0 && activePlayers[0].hand.length === 0;
 
@@ -606,7 +611,7 @@ export default function NimmtGame() {
   // Common Header & Overlay Components
   const CommonUI = () => (
     <>
-      <ScoreModal isOpen={showScoreboard} onClose={() => setShowScoreboard(false)} players={Object.values(gameState.players || {})} myId={user.uid} />
+      <ScoreModal isOpen={showScoreboard} onClose={() => setShowScoreboard(false)} players={Object.values(gameState.players || {})} myId={user.uid} votes={gameState.votes}/>
       <ChatModal isOpen={showChat} onClose={() => setShowChat(false)} messages={gameState.chat || []} onSend={sendChatMessage} myId={user.uid} />
       
       {/* Floating Buttons */}
@@ -679,9 +684,14 @@ export default function NimmtGame() {
     const isSpectator = myPlayer.isSpectator;
     const isSelected = myPlayer.selectedCard !== null;
     const playersList = Object.values(gameState.players);
-    // 待機人数は観戦者を除く
     const waitingCount = playersList.filter(p => !p.isSpectator && p.selectedCard === null).length;
     
+    // 投票関連
+    const votes = gameState.votes || {};
+    const voteCount = Object.keys(votes).length;
+    const isVoted = votes[user.uid];
+    const isHost = gameState.hostId === user.uid;
+
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col font-sans relative overflow-hidden">
         <CommonUI />
@@ -716,12 +726,11 @@ export default function NimmtGame() {
           </div>
         </div>
 
-        {/* Hand Area - 観戦者は表示を切り替え */}
+        {/* Hand Area */}
         {gameState.status === 'playing' && (
           <div className="fixed bottom-0 w-full bg-white border-t border-slate-200 shadow-[0_-4px_20px_rgba(0,0,0,0.1)] z-40 safe-area-bottom">
             <div className="max-w-4xl mx-auto p-4 flex flex-col gap-3">
               {isSpectator ? (
-                // 観戦者向け表示
                 <div className="flex flex-col items-center justify-center py-4 gap-2 text-slate-500">
                   <div className="flex items-center gap-2 text-lg font-bold">
                     <Eye size={24} /> 現在観戦中です
@@ -730,7 +739,6 @@ export default function NimmtGame() {
                   <button onClick={leaveLobby} className="mt-2 text-xs text-red-400 underline hover:text-red-600">退出する</button>
                 </div>
               ) : (
-                // プレイヤー向け表示
                 <>
                   <div className="flex justify-between items-center">
                     <div className="text-sm font-bold text-slate-600">
@@ -761,14 +769,46 @@ export default function NimmtGame() {
           </div>
         )}
 
-        {/* Game End Overlay */}
+        {/* Game End Overlay with Voting */}
         {gameState.status === 'finished' && (
           <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-             <div className="bg-white w-full max-w-sm rounded-3xl p-8 text-center shadow-2xl">
-                <Trophy size={64} className="mx-auto text-yellow-500 mb-4" />
-                <h2 className="text-3xl font-black text-slate-800 mb-2">GAME SET</h2>
-                <button onClick={() => setShowScoreboard(true)} className="w-full py-3 bg-indigo-100 text-indigo-700 font-bold rounded-xl mb-3">結果を見る</button>
-                <button onClick={() => setLobbyId('')} className="w-full py-3 bg-slate-800 text-white font-bold rounded-xl">ロビーへ戻る</button>
+             <div className="bg-white w-full max-w-sm rounded-3xl p-8 text-center shadow-2xl flex flex-col gap-3">
+                <Trophy size={64} className="mx-auto text-yellow-500 mb-2" />
+                <h2 className="text-3xl font-black text-slate-800">GAME SET</h2>
+                
+                <div className="bg-slate-50 p-3 rounded-xl mb-2">
+                   <div className="text-xs text-slate-500 font-bold mb-1">次のゲームへの投票</div>
+                   <div className="text-2xl font-mono font-bold text-indigo-600">
+                      {voteCount} <span className="text-slate-400 text-base">/ {playersList.length}</span>
+                   </div>
+                   <div className="w-full bg-slate-200 h-2 rounded-full mt-2 overflow-hidden">
+                      <div className="bg-indigo-500 h-full transition-all duration-500" style={{width: `${(voteCount/playersList.length)*100}%`}}></div>
+                   </div>
+                </div>
+
+                {!isVoted ? (
+                  <button onClick={castVote} className="w-full py-3 bg-green-600 text-white font-bold rounded-xl shadow-lg hover:bg-green-700 flex items-center justify-center gap-2 animate-pulse">
+                    <ThumbsUp size={20} /> 再戦に投票（準備完了）
+                  </button>
+                ) : (
+                  <div className="w-full py-3 bg-slate-100 text-slate-500 font-bold rounded-xl flex items-center justify-center gap-2">
+                    <CheckCircle size={20} /> 投票済み
+                  </div>
+                )}
+
+                {isHost && (
+                  <button 
+                    onClick={startGame} 
+                    className="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl shadow-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed mt-2"
+                  >
+                    次のゲームを開始する
+                  </button>
+                )}
+
+                <div className="flex gap-2 mt-2">
+                  <button onClick={() => setShowScoreboard(true)} className="flex-1 py-3 bg-white border border-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-50">結果を見る</button>
+                  <button onClick={leaveLobby} className="flex-1 py-3 bg-white border border-slate-200 text-red-500 font-bold rounded-xl hover:bg-red-50">退出</button>
+                </div>
              </div>
           </div>
         )}
