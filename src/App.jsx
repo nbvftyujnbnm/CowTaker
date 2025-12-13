@@ -15,6 +15,7 @@ import {
   setDoc, 
   onSnapshot, 
   updateDoc, 
+  deleteField, // 追加
   serverTimestamp, 
   increment,
   arrayUnion
@@ -33,7 +34,8 @@ import {
   CheckCircle,
   Loader,
   MessageCircle,
-  Send
+  Send,
+  LogOut // 追加
 } from 'lucide-react';
 
 /* --------------------------------------------------------------------------
@@ -300,6 +302,7 @@ export default function NimmtGame() {
       } else {
         setError("ロビーが見つかりません");
         setGameState(null);
+        setLobbyId('');
       }
     });
   }, [user, lobbyId, showChat, lastReadIndex]);
@@ -382,6 +385,28 @@ export default function NimmtGame() {
       setLobbyId(targetId);
     } catch (e) { setError("参加エラー: IDを確認してください"); }
     finally { setLoading(false); }
+  };
+
+  const leaveLobby = async () => {
+    if (!lobbyId || !user) return;
+    if (!window.confirm("ロビーから退出しますか？")) return;
+    
+    setLoading(true);
+    try {
+      const lobbyRef = doc(db, 'artifacts', appId, 'public', 'data', 'lobbies', lobbyId);
+      await updateDoc(lobbyRef, {
+        [`players.${user.uid}`]: deleteField()
+      });
+      setLobbyId('');
+      setGameState(null);
+    } catch (e) {
+      console.error(e);
+      // エラーでもローカルはリセット
+      setLobbyId('');
+      setGameState(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const startGame = async () => {
@@ -543,7 +568,7 @@ export default function NimmtGame() {
       <ScoreModal isOpen={showScoreboard} onClose={() => setShowScoreboard(false)} players={Object.values(gameState.players || {})} myId={user.uid} />
       <ChatModal isOpen={showChat} onClose={() => setShowChat(false)} messages={gameState.chat || []} onSend={sendChatMessage} myId={user.uid} />
       
-      {/* Floating Buttons (Visible in Waiting & Playing) */}
+      {/* Floating Buttons */}
       <div className="fixed top-4 right-4 z-50 flex gap-2">
         <button onClick={() => setShowScoreboard(true)} className="p-3 bg-white/90 backdrop-blur text-slate-600 rounded-full shadow-md hover:bg-slate-100 transition relative">
           <List size={24} />
@@ -585,13 +610,24 @@ export default function NimmtGame() {
             </div>
           ))}
         </div>
-        {isHost ? (
-          <button onClick={startGame} disabled={playersList.length < 2 || loading} className="w-full py-4 bg-indigo-600 text-white font-bold rounded-xl shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">
-            {loading ? 'Starting...' : 'ゲーム開始'}
+        
+        <div className="flex flex-col gap-3">
+          {isHost ? (
+            <button onClick={startGame} disabled={playersList.length < 2 || loading} className="w-full py-4 bg-indigo-600 text-white font-bold rounded-xl shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">
+              {loading ? 'Starting...' : 'ゲーム開始'}
+            </button>
+          ) : (
+            <div className="text-center text-slate-400 animate-pulse py-2">ホストの開始を待っています...</div>
+          )}
+          
+          <button 
+            onClick={leaveLobby} 
+            disabled={loading}
+            className="w-full py-3 bg-white text-red-500 border border-red-100 font-bold rounded-xl hover:bg-red-50 transition flex items-center justify-center gap-2"
+          >
+            <LogOut size={18} /> 退出する
           </button>
-        ) : (
-          <div className="text-center text-slate-400 animate-pulse">ホストの開始を待っています...</div>
-        )}
+        </div>
       </div>
     );
   }
