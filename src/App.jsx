@@ -13,9 +13,10 @@ import {
   collection, 
   doc, 
   setDoc, 
+  getDoc, // 追加
   onSnapshot, 
   updateDoc, 
-  deleteField, // 追加
+  deleteField,
   serverTimestamp, 
   increment,
   arrayUnion
@@ -35,7 +36,8 @@ import {
   Loader,
   MessageCircle,
   Send,
-  LogOut // 追加
+  LogOut,
+  Eye // 追加: 観戦アイコン
 } from 'lucide-react';
 
 /* --------------------------------------------------------------------------
@@ -123,6 +125,8 @@ const Card = ({ number, type = 'hand', onClick, isSelected, isRevealed = true, s
 // Modal: Scoreboard
 const ScoreModal = ({ isOpen, onClose, players, myId }) => {
   if (!isOpen) return null;
+  // 観戦者を除外してスコア表示する（あるいは観戦者として表示する）
+  // ここでは全員表示するが、観戦者はスコア変動なし
   const sortedPlayers = [...players].sort((a, b) => a.score - b.score);
 
   return (
@@ -143,9 +147,13 @@ const ScoreModal = ({ isOpen, onClose, players, myId }) => {
                 </div>
                 <div>
                   <div className="font-bold text-slate-800 flex items-center gap-1">
-                    {p.name} {p.id === myId && <span className="text-[10px] bg-indigo-200 text-indigo-800 px-1 rounded">YOU</span>}
+                    {p.name} 
+                    {p.id === myId && <span className="text-[10px] bg-indigo-200 text-indigo-800 px-1 rounded">YOU</span>}
+                    {p.isSpectator && <span className="text-[10px] bg-slate-200 text-slate-600 px-1 rounded flex items-center gap-0.5"><Eye size={10}/> 観戦</span>}
                   </div>
-                  <div className="text-xs text-slate-400">{p.selectedCard ? '選択済み' : '考え中...'}</div>
+                  <div className="text-xs text-slate-400">
+                    {p.isSpectator ? '観戦中' : (p.selectedCard ? '選択済み' : '考え中...')}
+                  </div>
                 </div>
               </div>
               <div className="font-mono font-black text-xl text-indigo-600">-{p.score}</div>
@@ -187,7 +195,6 @@ const ChatModal = ({ isOpen, onClose, messages = [], onSend, myId }) => {
           <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition"><X size={20} className="text-slate-500" /></button>
         </div>
         
-        {/* Messages Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-100">
           {messages.length === 0 && (
             <div className="text-center text-slate-400 text-sm mt-10">メッセージはまだありません</div>
@@ -215,7 +222,6 @@ const ChatModal = ({ isOpen, onClose, messages = [], onSend, myId }) => {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input Area */}
         <form onSubmit={handleSend} className="p-3 bg-white border-t border-slate-200 flex gap-2">
           <input
             type="text"
@@ -283,8 +289,8 @@ export default function NimmtGame() {
         const data = docSnap.data();
         setGameState(data);
         
-        // Reset selection if new round
         const myPlayer = data.players[user.uid];
+        // Reset local selection if server clears it
         if (myPlayer && myPlayer.selectedCard === null) {
           setLocalSelectedCard(null);
         }
@@ -316,13 +322,19 @@ export default function NimmtGame() {
   }, [showChat]);
 
   /* ------------------------------------------------------------------------
-     Host Auto-Resolution Logic
+     Host Auto-Resolution Logic (Modified for Spectators)
      ------------------------------------------------------------------------ */
   useEffect(() => {
     if (!gameState || !user) return;
     if (gameState.hostId === user.uid && gameState.status === 'playing') {
       const players = Object.values(gameState.players);
-      const allSelected = players.every(p => p.selectedCard !== null);
+      
+      // 観戦者を除いた「現役プレイヤー」を抽出
+      const activePlayers = players.filter(p => !p.isSpectator);
+      
+      // 全員選択済みかチェック
+      const allSelected = activePlayers.length > 0 && activePlayers.every(p => p.selectedCard !== null);
+      
       if (allSelected && !loading) {
         const timer = setTimeout(() => resolveTurn(), 1000);
         return () => clearTimeout(timer);
@@ -354,7 +366,8 @@ export default function NimmtGame() {
             name: playerName,
             score: 0,
             hand: [],
-            selectedCard: null
+            selectedCard: null,
+            isSpectator: false
           }
         },
         rows: { 0: [], 1: [], 2: [], 3: [] },
@@ -373,13 +386,25 @@ export default function NimmtGame() {
     try {
       const targetId = joinLobbyId.toUpperCase();
       const lobbyRef = doc(db, 'artifacts', appId, 'public', 'data', 'lobbies', targetId);
+      
+      // 現在のステータスを確認して観戦者かどうかを判定
+      const lobbySnap = await getDoc(lobbyRef);
+      if (!lobbySnap.exists()) {
+        setError("ロビーが見つかりません");
+        setLoading(false);
+        return;
+      }
+      const lobbyData = lobbySnap.data();
+      const isSpectator = lobbyData.status === 'playing';
+
       await updateDoc(lobbyRef, {
         [`players.${user.uid}`]: {
           id: user.uid,
           name: playerName,
           score: 0,
           hand: [],
-          selectedCard: null
+          selectedCard: null,
+          isSpectator: isSpectator
         }
       });
       setLobbyId(targetId);
@@ -401,7 +426,6 @@ export default function NimmtGame() {
       setGameState(null);
     } catch (e) {
       console.error(e);
-      // エラーでもローカルはリセット
       setLobbyId('');
       setGameState(null);
     } finally {
@@ -415,11 +439,19 @@ export default function NimmtGame() {
       const deck = Array.from({ length: 104 }, (_, i) => i + 1).sort(() => Math.random() - 0.5);
       const newRows = { 0: [deck.pop()], 1: [deck.pop()], 2: [deck.pop()], 3: [deck.pop()] };
       const updatedPlayers = { ...gameState.players };
+      
+      // ゲーム開始時は全員プレイヤーとして参加
       Object.keys(updatedPlayers).forEach(pid => {
         const hand = [];
         for (let k = 0; k < INITIAL_HAND_SIZE; k++) if(deck.length) hand.push(deck.pop());
         hand.sort((a, b) => a - b);
-        updatedPlayers[pid] = { ...updatedPlayers[pid], hand, selectedCard: null, score: 0 };
+        updatedPlayers[pid] = { 
+          ...updatedPlayers[pid], 
+          hand, 
+          selectedCard: null, 
+          score: 0,
+          isSpectator: false 
+        };
       });
 
       const lobbyRef = doc(db, 'artifacts', appId, 'public', 'data', 'lobbies', lobbyId);
@@ -436,13 +468,17 @@ export default function NimmtGame() {
 
   const handleCardClick = (card) => {
     if (gameState.status !== 'playing') return;
-    if (gameState.players[user.uid].selectedCard !== null) return;
+    const myPlayer = gameState.players[user.uid];
+    if (myPlayer.isSpectator) return; // 観戦者は操作不可
+    if (myPlayer.selectedCard !== null) return;
     setLocalSelectedCard(card);
   };
 
   const confirmSelection = async () => {
     if (!localSelectedCard) return;
     const myPlayer = gameState.players[user.uid];
+    if (myPlayer.isSpectator) return;
+
     const newHand = myPlayer.hand.filter(c => c !== localSelectedCard);
     const lobbyRef = doc(db, 'artifacts', appId, 'public', 'data', 'lobbies', lobbyId);
     await updateDoc(lobbyRef, {
@@ -476,7 +512,9 @@ export default function NimmtGame() {
       let currentPlayers = { ...gameState.players };
       let turnMessage = "";
       
+      // 観戦者を除外して処理
       const plays = Object.values(currentPlayers)
+        .filter(p => !p.isSpectator && p.selectedCard !== null)
         .map(p => ({ uid: p.id, card: p.selectedCard }))
         .sort((a, b) => a.card - b.card);
 
@@ -512,7 +550,10 @@ export default function NimmtGame() {
         player.selectedCard = null;
       }
 
-      const isGameEnd = Object.values(currentPlayers)[0].hand.length === 0;
+      // 手札判定も観戦者を除外
+      const activePlayers = Object.values(currentPlayers).filter(p => !p.isSpectator);
+      const isGameEnd = activePlayers.length > 0 && activePlayers[0].hand.length === 0;
+
       await updateDoc(lobbyRef, {
         rows: currentRows,
         players: currentPlayers,
@@ -635,9 +676,11 @@ export default function NimmtGame() {
   // View: Game Board
   if (gameState && (gameState.status === 'playing' || gameState.status === 'finished')) {
     const myPlayer = gameState.players[user.uid];
+    const isSpectator = myPlayer.isSpectator;
     const isSelected = myPlayer.selectedCard !== null;
     const playersList = Object.values(gameState.players);
-    const waitingCount = playersList.filter(p => p.selectedCard === null).length;
+    // 待機人数は観戦者を除く
+    const waitingCount = playersList.filter(p => !p.isSpectator && p.selectedCard === null).length;
     
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col font-sans relative overflow-hidden">
@@ -673,33 +716,47 @@ export default function NimmtGame() {
           </div>
         </div>
 
-        {/* Hand Area */}
+        {/* Hand Area - 観戦者は表示を切り替え */}
         {gameState.status === 'playing' && (
           <div className="fixed bottom-0 w-full bg-white border-t border-slate-200 shadow-[0_-4px_20px_rgba(0,0,0,0.1)] z-40 safe-area-bottom">
             <div className="max-w-4xl mx-auto p-4 flex flex-col gap-3">
-              <div className="flex justify-between items-center">
-                <div className="text-sm font-bold text-slate-600">
-                  {isSelected ? (
-                    <span className="text-green-600 flex items-center gap-1"><CheckCircle size={16}/> 送信完了 - 待機中 ({waitingCount}人)</span>
-                  ) : localSelectedCard ? (
-                    <span className="text-indigo-600">カードを選択中: <b>{localSelectedCard}</b></span>
-                  ) : (
-                    "カードを選んでください"
-                  )}
-                </div>
-                {!isSelected && localSelectedCard && (
-                  <button onClick={confirmSelection} className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-full font-bold shadow-lg animate-bounce transition active:scale-95">
-                    決定する
-                  </button>
-                )}
-              </div>
-              <div className="flex gap-2 overflow-x-auto pb-4 pt-2 px-1 snap-x scroll-smooth">
-                {myPlayer.hand.map((cardNum) => (
-                  <div key={cardNum} className={`snap-center flex-shrink-0 transition-opacity duration-300 ${isSelected ? 'opacity-40 grayscale pointer-events-none' : ''}`}>
-                    <Card number={cardNum} isSelected={localSelectedCard === cardNum} onClick={() => handleCardClick(cardNum)} type="hand" />
+              {isSpectator ? (
+                // 観戦者向け表示
+                <div className="flex flex-col items-center justify-center py-4 gap-2 text-slate-500">
+                  <div className="flex items-center gap-2 text-lg font-bold">
+                    <Eye size={24} /> 現在観戦中です
                   </div>
-                ))}
-              </div>
+                  <p className="text-sm">次のゲーム開始までお待ちください</p>
+                  <button onClick={leaveLobby} className="mt-2 text-xs text-red-400 underline hover:text-red-600">退出する</button>
+                </div>
+              ) : (
+                // プレイヤー向け表示
+                <>
+                  <div className="flex justify-between items-center">
+                    <div className="text-sm font-bold text-slate-600">
+                      {isSelected ? (
+                        <span className="text-green-600 flex items-center gap-1"><CheckCircle size={16}/> 送信完了 - 待機中 ({waitingCount}人)</span>
+                      ) : localSelectedCard ? (
+                        <span className="text-indigo-600">カードを選択中: <b>{localSelectedCard}</b></span>
+                      ) : (
+                        "カードを選んでください"
+                      )}
+                    </div>
+                    {!isSelected && localSelectedCard && (
+                      <button onClick={confirmSelection} className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-full font-bold shadow-lg animate-bounce transition active:scale-95">
+                        決定する
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex gap-2 overflow-x-auto pb-4 pt-2 px-1 snap-x scroll-smooth">
+                    {myPlayer.hand.map((cardNum) => (
+                      <div key={cardNum} className={`snap-center flex-shrink-0 transition-opacity duration-300 ${isSelected ? 'opacity-40 grayscale pointer-events-none' : ''}`}>
+                        <Card number={cardNum} isSelected={localSelectedCard === cardNum} onClick={() => handleCardClick(cardNum)} type="hand" />
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}
