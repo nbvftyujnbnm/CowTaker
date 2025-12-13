@@ -16,7 +16,8 @@ import {
   onSnapshot, 
   updateDoc, 
   serverTimestamp, 
-  increment 
+  increment,
+  arrayUnion
 } from 'firebase/firestore';
 import { 
   Copy, 
@@ -30,7 +31,9 @@ import {
   X,
   List,
   CheckCircle,
-  Loader
+  Loader,
+  MessageCircle,
+  Send
 } from 'lucide-react';
 
 /* --------------------------------------------------------------------------
@@ -58,7 +61,6 @@ const MAX_PLAYERS = 10;
 const INITIAL_HAND_SIZE = 10;
 const MAX_ROW_LENGTH = 5;
 
-// Calculate "牛の頭数" (Penalty Points)
 const getPenaltyPoints = (number) => {
   if (number === 55) return 7;
   if (number % 11 === 0) return 5;
@@ -67,7 +69,6 @@ const getPenaltyPoints = (number) => {
   return 1;
 };
 
-// Calculate total points for an array of cards
 const calculateRowPoints = (rowCards) => {
   return rowCards.reduce((sum, card) => sum + getPenaltyPoints(card), 0);
 };
@@ -117,23 +118,19 @@ const Card = ({ number, type = 'hand', onClick, isSelected, isRevealed = true, s
   );
 };
 
-// Modal Component for Scoreboard
+// Modal: Scoreboard
 const ScoreModal = ({ isOpen, onClose, players, myId }) => {
   if (!isOpen) return null;
-
   const sortedPlayers = [...players].sort((a, b) => a.score - b.score);
 
   return (
-    // z-indexを 60 に設定して、GAME SETオーバーレイ(z-50)より上に表示させる
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
       <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
         <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center sticky top-0">
           <h3 className="font-bold text-slate-700 flex items-center gap-2">
             <Trophy size={20} className="text-yellow-500" /> スコアボード
           </h3>
-          <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition">
-            <X size={20} className="text-slate-500" />
-          </button>
+          <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition"><X size={20} className="text-slate-500" /></button>
         </div>
         <div className="overflow-y-auto p-2">
           {sortedPlayers.map((p, idx) => (
@@ -146,17 +143,93 @@ const ScoreModal = ({ isOpen, onClose, players, myId }) => {
                   <div className="font-bold text-slate-800 flex items-center gap-1">
                     {p.name} {p.id === myId && <span className="text-[10px] bg-indigo-200 text-indigo-800 px-1 rounded">YOU</span>}
                   </div>
-                  <div className="text-xs text-slate-400">
-                    {p.selectedCard ? '選択済み' : '考え中...'}
-                  </div>
+                  <div className="text-xs text-slate-400">{p.selectedCard ? '選択済み' : '考え中...'}</div>
                 </div>
               </div>
-              <div className="font-mono font-black text-xl text-indigo-600">
-                -{p.score}
-              </div>
+              <div className="font-mono font-black text-xl text-indigo-600">-{p.score}</div>
             </div>
           ))}
         </div>
+      </div>
+    </div>
+  );
+};
+
+// Modal: Chat
+const ChatModal = ({ isOpen, onClose, messages = [], onSend, myId }) => {
+  const [inputText, setInputText] = useState('');
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    if (isOpen && messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [isOpen, messages]);
+
+  const handleSend = (e) => {
+    e.preventDefault();
+    if (!inputText.trim()) return;
+    onSend(inputText);
+    setInputText('');
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+      <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col h-[70vh]">
+        <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+          <h3 className="font-bold text-slate-700 flex items-center gap-2">
+            <MessageCircle size={20} className="text-indigo-500" /> チャット
+          </h3>
+          <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition"><X size={20} className="text-slate-500" /></button>
+        </div>
+        
+        {/* Messages Area */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-100">
+          {messages.length === 0 && (
+            <div className="text-center text-slate-400 text-sm mt-10">メッセージはまだありません</div>
+          )}
+          {messages.map((msg, idx) => {
+             const isMe = msg.senderId === myId;
+             return (
+               <div key={idx} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                 <div className="flex items-end gap-2 max-w-[85%]">
+                   {!isMe && (
+                     <div className="w-6 h-6 rounded-full bg-slate-300 flex items-center justify-center text-[10px] font-bold text-slate-600 flex-shrink-0">
+                       {msg.senderName.charAt(0)}
+                     </div>
+                   )}
+                   <div className={`p-3 rounded-2xl text-sm ${isMe ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-white text-slate-800 rounded-tl-none border border-slate-200 shadow-sm'}`}>
+                     {msg.text}
+                   </div>
+                 </div>
+                 <span className="text-[10px] text-slate-400 mt-1 mx-1">
+                   {!isMe && `${msg.senderName} • `}{new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                 </span>
+               </div>
+             );
+          })}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Input Area */}
+        <form onSubmit={handleSend} className="p-3 bg-white border-t border-slate-200 flex gap-2">
+          <input
+            type="text"
+            className="flex-1 p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition"
+            placeholder="メッセージを入力..."
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+          />
+          <button 
+            type="submit"
+            disabled={!inputText.trim()}
+            className="p-3 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-md"
+          >
+            <Send size={20} />
+          </button>
+        </form>
       </div>
     </div>
   );
@@ -174,7 +247,10 @@ export default function NimmtGame() {
   
   // UI States
   const [showScoreboard, setShowScoreboard] = useState(false);
-  const [localSelectedCard, setLocalSelectedCard] = useState(null); // 確定前のローカル選択
+  const [showChat, setShowChat] = useState(false);
+  const [localSelectedCard, setLocalSelectedCard] = useState(null);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [lastReadIndex, setLastReadIndex] = useState(0);
 
   // Auth & Init
   useEffect(() => {
@@ -196,7 +272,7 @@ export default function NimmtGame() {
     });
   }, []);
 
-  // Lobby Listener
+  // Lobby Listener & Chat Notification
   useEffect(() => {
     if (!user || !lobbyId) return;
     const lobbyRef = doc(db, 'artifacts', appId, 'public', 'data', 'lobbies', lobbyId);
@@ -205,39 +281,51 @@ export default function NimmtGame() {
         const data = docSnap.data();
         setGameState(data);
         
-        // ラウンドが進んだらローカル選択をリセット
+        // Reset selection if new round
         const myPlayer = data.players[user.uid];
         if (myPlayer && myPlayer.selectedCard === null) {
           setLocalSelectedCard(null);
         }
+
+        // Chat notification logic
+        const messages = data.chat || [];
+        if (showChat) {
+          setLastReadIndex(messages.length);
+          setUnreadCount(0);
+        } else {
+          const newCount = Math.max(0, messages.length - lastReadIndex);
+          setUnreadCount(newCount);
+        }
+
       } else {
         setError("ロビーが見つかりません");
         setGameState(null);
       }
     });
-  }, [user, lobbyId]);
+  }, [user, lobbyId, showChat, lastReadIndex]);
+
+  // Reset unread when chat opens
+  useEffect(() => {
+    if (showChat && gameState?.chat) {
+      setLastReadIndex(gameState.chat.length);
+      setUnreadCount(0);
+    }
+  }, [showChat]);
 
   /* ------------------------------------------------------------------------
      Host Auto-Resolution Logic
      ------------------------------------------------------------------------ */
   useEffect(() => {
     if (!gameState || !user) return;
-    
-    // ホストのみが実行する自動処理
     if (gameState.hostId === user.uid && gameState.status === 'playing') {
       const players = Object.values(gameState.players);
       const allSelected = players.every(p => p.selectedCard !== null);
-
-      // 全員選択済み かつ まだ処理中でないなら実行
       if (allSelected && !loading) {
-        // 少しだけ待ってから実行（UX向上のため）
-        const timer = setTimeout(() => {
-           resolveTurn();
-        }, 1000);
+        const timer = setTimeout(() => resolveTurn(), 1000);
         return () => clearTimeout(timer);
       }
     }
-  }, [gameState, user]); // loadingはdepsに入れない
+  }, [gameState, user]);
 
   /* ------------------------------------------------------------------------
      Game Actions
@@ -266,7 +354,8 @@ export default function NimmtGame() {
             selectedCard: null
           }
         },
-        rows: { 0: [], 1: [], 2: [], 3: [] }
+        rows: { 0: [], 1: [], 2: [], 3: [] },
+        chat: []
       });
       setLobbyId(newLobbyId);
     } catch (e) { setError("作成エラー"); }
@@ -298,13 +387,8 @@ export default function NimmtGame() {
   const startGame = async () => {
     setLoading(true);
     try {
-      const deck = Array.from({ length: 104 }, (_, i) => i + 1)
-        .sort(() => Math.random() - 0.5);
-
-      const newRows = {
-        0: [deck.pop()], 1: [deck.pop()], 2: [deck.pop()], 3: [deck.pop()]
-      };
-
+      const deck = Array.from({ length: 104 }, (_, i) => i + 1).sort(() => Math.random() - 0.5);
+      const newRows = { 0: [deck.pop()], 1: [deck.pop()], 2: [deck.pop()], 3: [deck.pop()] };
       const updatedPlayers = { ...gameState.players };
       Object.keys(updatedPlayers).forEach(pid => {
         const hand = [];
@@ -333,10 +417,8 @@ export default function NimmtGame() {
 
   const confirmSelection = async () => {
     if (!localSelectedCard) return;
-    
     const myPlayer = gameState.players[user.uid];
     const newHand = myPlayer.hand.filter(c => c !== localSelectedCard);
-    
     const lobbyRef = doc(db, 'artifacts', appId, 'public', 'data', 'lobbies', lobbyId);
     await updateDoc(lobbyRef, {
       [`players.${user.uid}.hand`]: newHand,
@@ -344,10 +426,25 @@ export default function NimmtGame() {
     });
   };
 
+  const sendChatMessage = async (text) => {
+    if (!text.trim()) return;
+    const newMessage = {
+      senderId: user.uid,
+      senderName: playerName,
+      text: text.trim(),
+      timestamp: Date.now()
+    };
+    try {
+      const lobbyRef = doc(db, 'artifacts', appId, 'public', 'data', 'lobbies', lobbyId);
+      await updateDoc(lobbyRef, {
+        chat: arrayUnion(newMessage)
+      });
+    } catch (e) { console.error(e); }
+  };
+
   const resolveTurn = async () => {
     if (!gameState || user.uid !== gameState.hostId) return;
     setLoading(true);
-
     try {
       const lobbyRef = doc(db, 'artifacts', appId, 'public', 'data', 'lobbies', lobbyId);
       let currentRows = { ...gameState.rows };
@@ -361,7 +458,6 @@ export default function NimmtGame() {
       for (const play of plays) {
         const { card, uid } = play;
         const player = currentPlayers[uid];
-        
         let bestRow = -1, minDiff = 1000;
         for (let i = 0; i < 4; i++) {
           const last = currentRows[i][currentRows[i].length - 1];
@@ -370,18 +466,14 @@ export default function NimmtGame() {
             bestRow = i;
           }
         }
-
         if (bestRow !== -1) {
           if (currentRows[bestRow].length >= MAX_ROW_LENGTH) {
             const pts = calculateRowPoints(currentRows[bestRow]);
             player.score += pts;
             turnMessage += `${player.name}がバースト(${pts}pt). `;
             currentRows[bestRow] = [card];
-          } else {
-            currentRows[bestRow] = [...currentRows[bestRow], card];
-          }
+          } else { currentRows[bestRow] = [...currentRows[bestRow], card]; }
         } else {
-          // 最小値ルール
           let targetRow = 0, minPenalty = 1000;
           for (let i = 0; i < 4; i++) {
             const pts = calculateRowPoints(currentRows[i]);
@@ -413,6 +505,7 @@ export default function NimmtGame() {
 
   if (!user) return <div className="h-screen flex items-center justify-center text-slate-400">Loading...</div>;
 
+  // View: Setup (Create/Join)
   if (!lobbyId) {
     return (
       <div className="min-h-screen bg-slate-100 p-4 flex items-center justify-center font-sans">
@@ -444,12 +537,37 @@ export default function NimmtGame() {
     );
   }
 
+  // Common Header & Overlay Components
+  const CommonUI = () => (
+    <>
+      <ScoreModal isOpen={showScoreboard} onClose={() => setShowScoreboard(false)} players={Object.values(gameState.players || {})} myId={user.uid} />
+      <ChatModal isOpen={showChat} onClose={() => setShowChat(false)} messages={gameState.chat || []} onSend={sendChatMessage} myId={user.uid} />
+      
+      {/* Floating Buttons (Visible in Waiting & Playing) */}
+      <div className="fixed top-4 right-4 z-50 flex gap-2">
+        <button onClick={() => setShowScoreboard(true)} className="p-3 bg-white/90 backdrop-blur text-slate-600 rounded-full shadow-md hover:bg-slate-100 transition relative">
+          <List size={24} />
+        </button>
+        <button onClick={() => setShowChat(true)} className="p-3 bg-white/90 backdrop-blur text-slate-600 rounded-full shadow-md hover:bg-slate-100 transition relative">
+          <MessageCircle size={24} />
+          {unreadCount > 0 && (
+            <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center animate-pulse border-2 border-white">
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </span>
+          )}
+        </button>
+      </div>
+    </>
+  );
+
+  // View: Waiting Room
   if (gameState && gameState.status === 'waiting') {
     const isHost = gameState.hostId === user.uid;
     const playersList = Object.values(gameState.players || {});
     return (
       <div className="min-h-screen bg-slate-50 p-4 max-w-2xl mx-auto font-sans">
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mb-6">
+        <CommonUI />
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mb-6 mt-16">
           <div className="text-xs font-bold text-slate-400">ROOM ID</div>
           <div className="text-3xl font-mono font-bold text-slate-800 flex items-center gap-2">
             {gameState.id}
@@ -478,6 +596,7 @@ export default function NimmtGame() {
     );
   }
 
+  // View: Game Board
   if (gameState && (gameState.status === 'playing' || gameState.status === 'finished')) {
     const myPlayer = gameState.players[user.uid];
     const isSelected = myPlayer.selectedCard !== null;
@@ -486,15 +605,14 @@ export default function NimmtGame() {
     
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col font-sans relative overflow-hidden">
-        {/* Header */}
-        <div className="bg-white/90 backdrop-blur-md px-4 py-3 shadow-sm flex justify-between items-center sticky top-0 z-30">
+        <CommonUI />
+        
+        {/* Info Header */}
+        <div className="bg-white/90 backdrop-blur-md px-4 py-3 shadow-sm flex justify-between items-center sticky top-0 z-30 pr-24">
           <div className="font-bold text-slate-700 text-sm md:text-base flex items-center gap-2">
              <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded text-xs">Round {gameState.round}</span>
-             <span className="truncate max-w-[150px]">{gameState.message || "ゲーム進行中"}</span>
+             <span className="truncate max-w-[150px] md:max-w-xs">{gameState.message || "ゲーム進行中"}</span>
           </div>
-          <button onClick={() => setShowScoreboard(true)} className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-full transition">
-            <List size={24} />
-          </button>
         </div>
 
         {/* Board Area */}
@@ -519,11 +637,10 @@ export default function NimmtGame() {
           </div>
         </div>
 
-        {/* Hand Area (Fixed Bottom) */}
+        {/* Hand Area */}
         {gameState.status === 'playing' && (
           <div className="fixed bottom-0 w-full bg-white border-t border-slate-200 shadow-[0_-4px_20px_rgba(0,0,0,0.1)] z-40 safe-area-bottom">
             <div className="max-w-4xl mx-auto p-4 flex flex-col gap-3">
-              {/* Status Bar */}
               <div className="flex justify-between items-center">
                 <div className="text-sm font-bold text-slate-600">
                   {isSelected ? (
@@ -535,25 +652,15 @@ export default function NimmtGame() {
                   )}
                 </div>
                 {!isSelected && localSelectedCard && (
-                  <button 
-                    onClick={confirmSelection}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-full font-bold shadow-lg animate-bounce transition active:scale-95"
-                  >
+                  <button onClick={confirmSelection} className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-full font-bold shadow-lg animate-bounce transition active:scale-95">
                     決定する
                   </button>
                 )}
               </div>
-
-              {/* Cards Scroll */}
               <div className="flex gap-2 overflow-x-auto pb-4 pt-2 px-1 snap-x scroll-smooth">
                 {myPlayer.hand.map((cardNum) => (
                   <div key={cardNum} className={`snap-center flex-shrink-0 transition-opacity duration-300 ${isSelected ? 'opacity-40 grayscale pointer-events-none' : ''}`}>
-                    <Card 
-                      number={cardNum} 
-                      isSelected={localSelectedCard === cardNum}
-                      onClick={() => handleCardClick(cardNum)}
-                      type="hand"
-                    />
+                    <Card number={cardNum} isSelected={localSelectedCard === cardNum} onClick={() => handleCardClick(cardNum)} type="hand" />
                   </div>
                 ))}
               </div>
@@ -561,14 +668,7 @@ export default function NimmtGame() {
           </div>
         )}
 
-        {/* Modals */}
-        <ScoreModal 
-          isOpen={showScoreboard} 
-          onClose={() => setShowScoreboard(false)} 
-          players={playersList}
-          myId={user.uid}
-        />
-
+        {/* Game End Overlay */}
         {gameState.status === 'finished' && (
           <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
              <div className="bg-white w-full max-w-sm rounded-3xl p-8 text-center shadow-2xl">
