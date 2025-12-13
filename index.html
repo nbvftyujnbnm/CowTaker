@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Cow Taker Online</title>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600&display=swap');
+        body { font-family: 'Fredoka', sans-serif; background-color: #2D6E32; color: white; user-select: none; -webkit-user-select: none; }
+        .card-shadow { box-shadow: 2px 2px 0px rgba(0,0,0,0.3); }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .anim-pop { animation: pop 0.2s ease-out; }
+        @keyframes pop { 0% { transform: scale(0.8); } 100% { transform: scale(1); } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // ==========================================
+        //  設定エリア (ここにFirebase Configを貼る)
+        // ==========================================
+        const firebaseConfig = {
+            // ★ここにFirebaseコンソールからコピーしたConfigを貼り付けてください
+            apiKey: "AIzaSyCEuMejvz9b7yl0eo4aNUv2tZuN37nLTBs",
+    		authDomain: "cowtaker.firebaseapp.com",
+  			projectId: "cowtaker",
+    		storageBucket: "cowtaker.firebasestorage.app",
+    		messagingSenderId: "54764846498",
+    		appId: "1:54764846498:web:f6b8d36ad672c3d08586fb",
+    		measurementId: "G-SRPT7362MW"
+        };
+
+        // Firebase初期化（Configが未設定の場合はダミーで動作を防ぐ）
+        let db;
+        try {
+            if (firebaseConfig.apiKey !== "YOUR_API_KEY") {
+                firebase.initializeApp(firebaseConfig);
+                db = firebase.firestore();
+            }
+        } catch (e) {
+            console.error("Firebase init error", e);
+        }
+
+        const { useState, useEffect, useRef } = React;
+
+        // ==========================================
+        //  ゲームロジック & ヘルパー
+        // ==========================================
+        
+        // 牛（失点）の計算
+        const getCows = (num) => {
+            if (num === 55) return 7;
+            if (num % 11 === 0) return 5;
+            if (num % 10 === 0) return 3;
+            if (num % 5 === 0) return 2;
+            return 1;
+        };
+
+        // デッキ生成 (1-104)
+        const createDeck = () => {
+            return Array.from({ length: 104 }, (_, i) => i + 1).sort(() => Math.random() - 0.5);
+        };
+
+        // ==========================================
+        //  コンポーネント
+        // ==========================================
+
+        const Card = ({ num, size = "md", selected = false, onClick, revealed = true }) => {
+            const cows = getCows(num);
+            const bgColor = 
+                cows === 7 ? "bg-red-500" : 
+                cows === 5 ? "bg-blue-500" : 
+                cows === 3 ? "bg-orange-500" : 
+                cows === 2 ? "bg-sky-400" : "bg-slate-100";
+            
+            const textColor = cows === 1 ? "text-slate-800" : "text-white";
+            
+            const sizeClass = 
+                size === "sm" ? "w-8 h-12 text-xs" : 
+                size === "lg" ? "w-16 h-24 text-xl" : "w-12 h-16 text-sm";
+
+            if (!revealed) {
+                return (
+                    <div className={`${sizeClass} rounded bg-indigo-800 border-2 border-white flex items-center justify-center card-shadow`}>
+                        <div className="w-1/2 h-1/2 bg-indigo-600 rounded-full"></div>
+                    </div>
+                );
+            }
+
+            return (
+                <div 
+                    onClick={() => onClick && onClick(num)}
+                    className={`${sizeClass} ${bgColor} ${textColor} rounded cursor-pointer flex flex-col items-center justify-between p-1 font-bold card-shadow transition-transform ${selected ? 'transform -translate-y-2 ring-2 ring-yellow-400' : ''}`}
+                >
+                    <span className="leading-none">{num}</span>
+                    <div className="flex gap-0.5 flex-wrap justify-center w-full">
+                        {Array.from({length: Math.min(cows, 5)}).map((_,i) => (
+                            <div key={i} className={`rounded-full ${cows === 1 ? 'bg-slate-400' : 'bg-white/70'}`} style={{width: '4px', height: '4px'}}></div>
+                        ))}
+                         {cows > 5 && <span className="text-[8px] leading-none">+</span>}
+                    </div>
+                    <span className="leading-none transform rotate-180">{num}</span>
+                </div>
+            );
+        };
+
+        const Row = ({ cards, onSelect, isSelectable }) => {
+            return (
+                <div 
+                    onClick={onSelect}
+                    className={`flex items-center gap-1 bg-black/20 p-2 rounded-lg mb-2 overflow-x-auto no-scrollbar min-h-[4.5rem] transition-colors ${isSelectable ? 'ring-2 ring-yellow-400 bg-yellow-500/20 cursor-pointer' : ''}`}
+                >
+                    {cards.map((num) => (
+                        <Card key={num} num={num} size="md" />
+                    ))}
+                    <div className="text-white/30 text-xs ml-auto pr-2">
+                        {cards.reduce((acc, c) => acc + getCows(c), 0)}🐮
+                    </div>
+                </div>
+            );
+        };
+
+        // ==========================================
+        //  メインアプリ
+        // ==========================================
+
+        const App = () => {
+            const [view, setView] = useState("setup"); // setup, lobby, game
+            const [playerName, setPlayerName] = useState("");
+            const [roomId, setRoomId] = useState("");
+            const [error, setError] = useState("");
+            const [gameState, setGameState] = useState(null);
+            const [myId, setMyId] = useState(null);
+            
+            // ゲーム内状態
+            const [selectedCard, setSelectedCard] = useState(null);
+
+            // Firestore購読
+            useEffect(() => {
+                if (!db || !roomId || view === "setup") return;
+
+                const unsubscribe = db.collection("rooms").doc(roomId).onSnapshot((doc) => {
+                    if (doc.exists) {
+                        setGameState(doc.data());
+                    } else {
+                        setError("部屋が見つかりません");
+                        setView("lobby");
+                    }
+                }, (err) => {
+                    console.error(err);
+                    setError("通信エラーが発生しました");
+                });
+
+                return () => unsubscribe();
+            }, [roomId, view]);
+
+            // 部屋作成
+            const createRoom = async () => {
+                if (!playerName) return setError("名前を入力してください");
+                if (!db) return setError("Firebaseが設定されていません。コード内のConfigを確認してください。");
+                
+                const newRoomId = Math.random().toString(36).substring(2, 6).toUpperCase();
+                const playerId = Math.random().toString(36).substring(2, 9);
+                
+                const initialState = {
+                    status: "waiting", // waiting, playing, round_end, game_end
+                    players: [{ id: playerId, name: playerName, score: 0, hand: [], selected: null }],
+                    hostId: playerId,
+                    rows: [[], [], [], []],
+                    deck: [],
+                    turnCount: 0,
+                    phase: "selection", // selection, resolution, row_selection
+                    pendingCard: null, // 行選択待ちのカード情報
+                    pendingPlayerId: null
+                };
+
+                await db.collection("rooms").doc(newRoomId).set(initialState);
+                setMyId(playerId);
+                setRoomId(newRoomId);
+                setView("lobby");
+            };
+
+            // 部屋参加
+            const joinRoom = async () => {
+                if (!playerName || !roomId) return setError("名前と部屋IDを入力してください");
+                if (!db) return setError("Firebase Config未設定");
+
+                const docRef = db.collection("rooms").doc(roomId);
+                const doc = await docRef.get();
+                
+                if (!doc.exists) return setError("部屋が見つかりません");
+                const data = doc.data();
+                if (data.status !== "waiting") return setError("すでにゲームが始まっています");
+
+                const playerId = Math.random().toString(36).substring(2, 9);
+                const newPlayers = [...data.players, { id: playerId, name: playerName, score: 0, hand: [], selected: null }];
+                
+                await docRef.update({ players: newPlayers });
+                setMyId(playerId);
+                setView("lobby");
+            };
+
+            // ゲーム開始 (ホストのみ)
+            const startGame = async () => {
+                const deck = createDeck();
+                const players = [...gameState.players];
+                const rows = [[], [], [], []];
+
+                // 列に1枚ずつ
+                for(let i=0; i<4; i++) rows[i].push(deck.pop());
+                rows.sort((a,b) => a[0] - b[0]); // 初期列は昇順じゃなくてもいいが、見やすくするため
+
+                // プレイヤーに10枚ずつ
+                players.forEach(p => {
+                    p.hand = [];
+                    for(let i=0; i<10; i++) p.hand.push(deck.pop());
+                    p.hand.sort((a,b) => a-b);
+                    p.selected = null;
+                });
+
+                await db.collection("rooms").doc(roomId).update({
+                    status: "playing",
+                    phase: "selection",
+                    deck,
+                    rows,
+                    players,
+                    turnCount: 1
+                });
+            };
+
+            // カード選択
+            const selectCardAction = async () => {
+                if (!selectedCard) return;
+                
+                const newPlayers = gameState.players.map(p => {
+                    if (p.id === myId) {
+                        return { 
+                            ...p, 
+                            selected: selectedCard, 
+                            hand: p.hand.filter(c => c !== selectedCard) 
+                        };
+                    }
+                    return p;
+                });
+
+                // 全員選択したかチェック
+                const allSelected = newPlayers.every(p => p.selected !== null);
+                
+                let updates = { players: newPlayers };
+                
+                if (allSelected) {
+                    updates.phase = "resolution";
+                    // ここで解決処理を呼び出すのはホストの役割にするが、
+                    // 簡単のため、statusをresolutionにして、useEffectでホストが処理するようにする
+                }
+
+                await db.collection("rooms").doc(roomId).update(updates);
+                setSelectedCard(null);
+            };
+
+            // ホストによるターン解決監視
+            useEffect(() => {
+                if (!gameState || gameState.hostId !== myId || gameState.phase !== "resolution") return;
+
+                const resolveTurn = async () => {
+                    // 全員の選択カードを取得し、値でソート
+                    let players = [...gameState.players];
+                    let rows = [...gameState.rows];
+                    
+                    // 選択カードリストを作成: [{playerId, card}, ...]
+                    const moves = players.map(p => ({ playerId: p.id, card: p.selected }))
+                                         .sort((a, b) => a.card - b.card);
+
+                    // 1枚ずつ処理（非同期でState更新が必要なため、複雑な処理になる）
+                    // ここでは簡易的に「最初の1枚」を処理して、もし行選択が必要なら止めるロジックにする
+                    
+                    // すでに処理中のカードがあればスキップ
+                    if (gameState.pendingCard) return;
+
+                    // 未処理のカードを探す（players配列内のselectedは保持されている）
+                    // ここは簡易実装のため、メモリ上で一気に計算できるところまで計算する
+                    
+                    // しかし、行選択（小さい数を出した場合）はユーザー入力が必要。
+                    // なので、ロジック：
+                    // movesの先頭を見る。
+                    // そのカードが自動配置可能かチェック。
+                    // 可能 -> 配置して更新 -> 再度useEffectが走る
+                    // 不可能（行選択） -> phaseを'row_selection'にし、該当プレイヤーに入力を促す
+                    
+                    // まだ盤面に置かれていない（処理されていない）プレイヤーのmoveを探す
+                    // ※ ここでは「selectedがnullでないプレイヤー」を未処理とみなす
+                    // （処理完了時にselectedをnullにし、カードをrowsに追加する設計）
+                    
+                    const activeMoves = players.filter(p => p.selected !== null)
+                                               .map(p => ({ playerId: p.id, card: p.selected }))
+                                               .sort((a, b) => a.card - b.card);
+
+                    if (activeMoves.length === 0) {
+                        // 全員処理完了 -> 次のターンへ
+                        if (gameState.turnCount >= 10) {
+                            await db.collection("rooms").doc(roomId).update({ status: "game_end", phase: "finished" });
+                        } else {
+                            await db.collection("rooms").doc(roomId).update({ 
+                                phase: "selection", 
+                                turnCount: gameState.turnCount + 1 
+                            });
+                        }
+                        return;
+                    }
+
+                    const currentMove = activeMoves[0];
+                    const card = currentMove.card;
+                    const playerId = currentMove.playerId;
+
+                    // 最適な行を探す
+                    let targetRowIndex = -1;
+                    let maxVal = -1;
+
+                    rows.forEach((row, index) => {
+                        const lastCard = row[row.length - 1];
+                        if (card > lastCard && lastCard > maxVal) {
+                            maxVal = lastCard;
+                            targetRowIndex = index;
+                        }
+                    });
+
+                    if (targetRowIndex !== -1) {
+                        // 自動配置
+                        let newRows = [...rows];
+                        let takenCows = 0;
+                        let player = players.find(p => p.id === playerId);
+
+                        if (newRows[targetRowIndex].length >= 5) {
+                            // 6枚目！列回収
+                            takenCows = newRows[targetRowIndex].reduce((acc, c) => acc + getCows(c), 0);
+                            newRows[targetRowIndex] = [card]; // そのカードが新しい先頭
+                        } else {
+                            newRows[targetRowIndex].push(card);
+                        }
+
+                        // プレイヤー更新
+                        const updatedPlayers = players.map(p => {
+                            if (p.id === playerId) {
+                                return { ...p, score: p.score + takenCows, selected: null }; // selected nullで処理済フラグ
+                            }
+                            return p;
+                        });
+
+                        await db.collection("rooms").doc(roomId).update({
+                            rows: newRows,
+                            players: updatedPlayers
+                        });
+                    } else {
+                        // 置ける行がない -> ユーザーに行選択させる
+                        await db.collection("rooms").doc(roomId).update({
+                            phase: "row_selection",
+                            pendingCard: card,
+                            pendingPlayerId: playerId
+                        });
+                    }
+                };
+                
+                // 少し遅延を入れてアニメーション感を作る
+                const timer = setTimeout(resolveTurn, 1000);
+                return () => clearTimeout(timer);
+
+            }, [gameState, myId, roomId]);
+
+
+            // 行選択アクション（小さいカードを出した時）
+            const selectRowAction = async (rowIndex) => {
+                if (gameState.phase !== "row_selection" || gameState.pendingPlayerId !== myId) return;
+
+                const rows = [...gameState.rows];
+                const card = gameState.pendingCard;
+                
+                // 選択した行を回収
+                const takenCows = rows[rowIndex].reduce((acc, c) => acc + getCows(c), 0);
+                rows[rowIndex] = [card];
+
+                const players = gameState.players.map(p => {
+                    if (p.id === myId) {
+                        return { ...p, score: p.score + takenCows, selected: null }; // 処理完了
+                    }
+                    return p;
+                });
+
+                await db.collection("rooms").doc(roomId).update({
+                    rows: rows,
+                    players: players,
+                    phase: "resolution", // 解決フェーズに戻る
+                    pendingCard: null,
+                    pendingPlayerId: null
+                });
+            };
+            
+            // 新しいゲームへ
+            const resetGame = async () => {
+                 await db.collection("rooms").doc(roomId).update({
+                    status: "waiting",
+                    phase: "selection",
+                    turnCount: 0,
+                    players: gameState.players.map(p => ({...p, score: 0, hand: [], selected: null}))
+                 });
+            }
+
+
+            // ====================
+            // レンダリングロジック
+            // ====================
+
+            if (view === "setup") {
+                return (
+                    <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-green-900">
+                        <h1 className="text-4xl font-bold mb-8 text-yellow-400 drop-shadow-md">Cow Taker</h1>
+                        
+                        {!db && (
+                            <div className="bg-red-500/80 p-4 rounded mb-4 max-w-md text-sm">
+                                <b>設定が必要です:</b> index.html内の `firebaseConfig` にAPIキーを設定してください。
+                            </div>
+                        )}
+                        
+                        <div className="bg-white/10 backdrop-blur-md p-6 rounded-xl w-full max-w-sm">
+                            <input 
+                                className="w-full p-3 mb-4 rounded text-slate-800 font-bold"
+                                placeholder="ニックネーム"
+                                value={playerName}
+                                onChange={e => setPlayerName(e.target.value)}
+                            />
+                            <button onClick={createRoom} className="w-full bg-yellow-500 hover:bg-yellow-400 text-yellow-900 font-bold p-3 rounded mb-2 transition">
+                                部屋を作る
+                            </button>
+                            <div className="flex gap-2">
+                                <input 
+                                    className="flex-1 p-3 rounded text-slate-800 uppercase"
+                                    placeholder="部屋ID"
+                                    value={roomId}
+                                    onChange={e => setRoomId(e.target.value.toUpperCase())}
+                                />
+                                <button onClick={joinRoom} className="bg-sky-500 hover:bg-sky-400 px-6 rounded font-bold transition">
+                                    参加
+                                </button>
+                            </div>
+                            {error && <p className="text-red-300 mt-2 text-sm text-center">{error}</p>}
+                        </div>
+                    </div>
+                );
+            }
+
+            if (view === "lobby" && gameState) {
+                const isHost = gameState.hostId === myId;
+                return (
+                    <div className="min-h-screen p-6 bg-green-900 flex flex-col items-center">
+                        <div className="text-center mb-8">
+                            <p className="text-sm text-green-300">ROOM ID</p>
+                            <h2 className="text-6xl font-bold tracking-widest">{roomId}</h2>
+                        </div>
+                        
+                        <div className="w-full max-w-md bg-white/10 rounded-xl p-4 mb-8">
+                            <h3 className="text-green-300 border-b border-green-700 pb-2 mb-2">参加者 ({gameState.players.length})</h3>
+                            {gameState.players.map(p => (
+                                <div key={p.id} className="flex justify-between py-2 border-b border-green-800/50 last:border-0">
+                                    <span>{p.name} {p.id === gameState.hostId && '👑'}</span>
+                                    {gameState.status === "game_end" && <span>{p.score}🐮</span>}
+                                </div>
+                            ))}
+                        </div>
+
+                        {isHost && gameState.status === "waiting" && (
+                            <button onClick={startGame} className="bg-yellow-500 text-yellow-900 text-xl font-bold px-12 py-4 rounded-full shadow-lg hover:scale-105 transition">
+                                ゲーム開始
+                            </button>
+                        )}
+                        
+                        {gameState.status === "playing" && (
+                            <div className="text-2xl animate-pulse">ゲーム進行中...</div>
+                        )}
+                        
+                        {gameState.status === "game_end" && isHost && (
+                             <button onClick={resetGame} className="bg-sky-500 text-white font-bold px-8 py-3 rounded mt-4">
+                                もう一度遊ぶ
+                            </button>
+                        )}
+                    </div>
+                );
+            }
+
+            if (gameState && (gameState.status === "playing" || gameState.status === "game_end")) {
+                const myPlayer = gameState.players.find(p => p.id === myId);
+                const isMyTurnToSelectRow = gameState.phase === "row_selection" && gameState.pendingPlayerId === myId;
+                
+                if(gameState.status === "game_end") {
+                     // 簡易リザルト
+                     const sortedPlayers = [...gameState.players].sort((a,b) => a.score - b.score);
+                     return (
+                         <div className="min-h-screen bg-green-900 flex flex-col items-center justify-center p-4">
+                             <h2 className="text-4xl font-bold mb-6 text-yellow-400">結果発表!</h2>
+                             <div className="bg-white text-slate-800 rounded-lg p-6 w-full max-w-md shadow-xl">
+                                 {sortedPlayers.map((p, i) => (
+                                     <div key={p.id} className={`flex justify-between items-center p-3 border-b ${i===0 ? 'bg-yellow-100 font-bold text-lg' : ''}`}>
+                                         <div className="flex items-center gap-2">
+                                             <span className="w-6 text-center">{i+1}.</span>
+                                             <span>{p.name}</span>
+                                         </div>
+                                         <span>{p.score} 🐮</span>
+                                     </div>
+                                 ))}
+                             </div>
+                             {gameState.hostId === myId && (
+                                 <button onClick={resetGame} className="mt-8 bg-sky-500 text-white font-bold px-8 py-3 rounded">
+                                    ロビーに戻る
+                                </button>
+                             )}
+                         </div>
+                     )
+                }
+
+                return (
+                    <div className="h-screen flex flex-col bg-green-800 overflow-hidden">
+                        {/* ヘッダー: 他のプレイヤー情報 */}
+                        <div className="flex-none p-2 bg-green-900 flex gap-2 overflow-x-auto no-scrollbar">
+                            {gameState.players.filter(p => p.id !== myId).map(p => (
+                                <div key={p.id} className={`flex flex-col items-center min-w-[60px] p-1 rounded ${p.selected ? 'bg-green-700' : ''}`}>
+                                    <span className="text-xs truncate w-full text-center">{p.name}</span>
+                                    <div className="flex items-center gap-1">
+                                        <div className="w-4 h-6 bg-indigo-900 border border-white/50 rounded"></div>
+                                        <span className="text-xs font-bold">{p.score}</span>
+                                    </div>
+                                    {/* 解決フェーズでカードを表示 */}
+                                    {gameState.phase !== "selection" && p.selected !== null && (
+                                        <div className="absolute top-10 z-10 scale-75 shadow-lg">
+                                            <Card num={p.selected} size="sm" />
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* メインボード: 4つの列 */}
+                        <div className="flex-1 p-4 overflow-y-auto bg-[#2D6E32] shadow-inner relative">
+                             {/* 通知エリア */}
+                            {isMyTurnToSelectRow && (
+                                <div className="absolute inset-0 z-20 bg-black/60 flex items-center justify-center pointer-events-none">
+                                    <div className="bg-white text-slate-900 p-4 rounded-xl shadow-xl animate-bounce">
+                                        <p className="font-bold">引き取る列を選んでください！</p>
+                                    </div>
+                                </div>
+                            )}
+
+                            {gameState.rows.map((row, i) => (
+                                <Row 
+                                    key={i} 
+                                    cards={row} 
+                                    isSelectable={isMyTurnToSelectRow}
+                                    onSelect={() => isMyTurnToSelectRow && selectRowAction(i)}
+                                />
+                            ))}
+                        </div>
+
+                        {/* 自分の情報 & ハンド */}
+                        <div className="flex-none bg-green-900 p-2 pb-6 rounded-t-xl shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.3)] z-10">
+                            <div className="flex justify-between items-center px-2 mb-2">
+                                <div>
+                                    <span className="font-bold text-yellow-400">{myPlayer.name}</span>
+                                    <span className="ml-2 text-sm text-white/70">失点: {myPlayer.score}</span>
+                                </div>
+                                <div className="text-xs bg-black/30 px-2 py-1 rounded">
+                                    Round {gameState.turnCount}/10
+                                </div>
+                            </div>
+                            
+                            {/* アクションボタン */}
+                            {gameState.phase === "selection" && myPlayer.selected === null && (
+                                <div className="flex justify-center mb-2 h-10">
+                                    {selectedCard ? (
+                                        <button 
+                                            onClick={selectCardAction}
+                                            className="bg-yellow-500 hover:bg-yellow-400 text-yellow-900 font-bold px-8 py-1 rounded-full shadow-lg transition transform active:scale-95"
+                                        >
+                                            決定
+                                        </button>
+                                    ) : (
+                                        <div className="text-sm text-white/50 py-1">カードを選んでください</div>
+                                    )}
+                                </div>
+                            )}
+                            
+                            {myPlayer.selected !== null && gameState.phase === "selection" && (
+                                <div className="text-center text-sm text-green-300 mb-2 h-10 flex items-center justify-center">
+                                    他のプレイヤーを待っています...
+                                </div>
+                            )}
+
+                            {/* 手札 */}
+                            <div className="flex gap-2 overflow-x-auto px-2 pb-2 no-scrollbar min-h-[5rem]">
+                                {myPlayer.hand.map(num => (
+                                    <div key={num} className="flex-none">
+                                        <Card 
+                                            num={num} 
+                                            selected={selectedCard === num} 
+                                            onClick={(n) => gameState.phase === "selection" && myPlayer.selected === null ? setSelectedCard(n) : null}
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            return null;
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
+
