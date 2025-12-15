@@ -39,7 +39,7 @@ import {
   LogOut, 
   Eye,
   ThumbsUp,
-  Library // 追加: 回収カード一覧用アイコン
+  Library
 } from 'lucide-react';
 
 /* --------------------------------------------------------------------------
@@ -166,48 +166,96 @@ const ScoreModal = ({ isOpen, onClose, players, myId, votes }) => {
   );
 };
 
-// Modal: Collected Cards
+// Modal: Collected Cards (Updated)
 const CollectedCardsModal = ({ isOpen, onClose, players, myId }) => {
   if (!isOpen) return null;
-  // スコアの悪い順（たくさん取った順）に表示
+  const [viewMode, setViewMode] = useState('all'); // 'all' or 'players'
+
+  // 全回収カードを集計してソート
+  const allCollectedCards = Array.from(new Set(
+    players.flatMap(p => p.collectedCards || [])
+  )).sort((a, b) => a - b);
+
   const sortedPlayers = [...players].sort((a, b) => b.score - a.score);
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
       <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
-        <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center sticky top-0">
-          <h3 className="font-bold text-slate-700 flex items-center gap-2">
-            <Library size={20} className="text-red-500" /> 回収カード一覧
-          </h3>
-          <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition"><X size={20} className="text-slate-500" /></button>
+        {/* Header */}
+        <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col gap-3 sticky top-0 z-10">
+          <div className="flex justify-between items-center">
+            <h3 className="font-bold text-slate-700 flex items-center gap-2">
+              <Library size={20} className="text-red-500" /> 回収カード一覧
+            </h3>
+            <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition"><X size={20} className="text-slate-500" /></button>
+          </div>
+          
+          {/* View Toggle */}
+          <div className="flex p-1 bg-slate-200 rounded-lg">
+            <button 
+              onClick={() => setViewMode('all')}
+              className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${viewMode === 'all' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              全体 (ソート順)
+            </button>
+            <button 
+              onClick={() => setViewMode('players')}
+              className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${viewMode === 'players' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              プレイヤー別
+            </button>
+          </div>
         </div>
-        <div className="overflow-y-auto p-4 space-y-4">
-          {sortedPlayers.filter(p => !p.isSpectator).map((p) => (
-            <div key={p.id} className={`rounded-xl border ${p.id === myId ? 'border-indigo-200 bg-indigo-50/50' : 'border-slate-200 bg-white'}`}>
-              <div className="p-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/80 rounded-t-xl">
-                <div className="font-bold text-slate-700 flex items-center gap-2">
-                  {p.name}
-                  {p.id === myId && <span className="text-[10px] bg-indigo-200 text-indigo-800 px-1 rounded">YOU</span>}
-                </div>
-                <div className="text-xs font-mono">
-                  <span className="text-slate-500">回収:</span> <span className="font-bold text-red-600">{p.collectedCards ? p.collectedCards.length : 0}枚</span>
-                  <span className="mx-2 text-slate-300">|</span>
-                  <span className="text-slate-500">失点:</span> <span className="font-bold text-red-600">-{p.score}</span>
-                </div>
+
+        {/* Content */}
+        <div className="overflow-y-auto p-4 bg-slate-100 min-h-0">
+          {viewMode === 'all' ? (
+            <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+              <div className="mb-3 text-xs font-bold text-slate-500 flex justify-between">
+                <span>TOTAL USED: {allCollectedCards.length}枚</span>
+                <span className="text-slate-400">※盤面のカードは含みません</span>
               </div>
-              <div className="p-3">
-                {p.collectedCards && p.collectedCards.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {[...p.collectedCards].sort((a,b)=>a-b).map((cardNum, i) => (
-                      <Card key={`${p.id}-collected-${i}`} number={cardNum} type="display" small={true} />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center text-slate-400 text-xs py-2">回収したカードはありません</div>
-                )}
-              </div>
+              
+              {allCollectedCards.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {allCollectedCards.map((cardNum) => (
+                    <Card key={`all-${cardNum}`} number={cardNum} type="display" small={true} />
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center text-slate-400 text-sm py-8">まだ回収されたカードはありません</div>
+              )}
             </div>
-          ))}
+          ) : (
+            <div className="space-y-4">
+              {sortedPlayers.filter(p => !p.isSpectator).map((p) => (
+                <div key={p.id} className={`rounded-xl border ${p.id === myId ? 'border-indigo-200 bg-indigo-50/50' : 'border-slate-200 bg-white'}`}>
+                  <div className="p-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/80 rounded-t-xl">
+                    <div className="font-bold text-slate-700 flex items-center gap-2">
+                      {p.name}
+                      {p.id === myId && <span className="text-[10px] bg-indigo-200 text-indigo-800 px-1 rounded">YOU</span>}
+                    </div>
+                    <div className="text-xs font-mono">
+                      <span className="text-slate-500">回収:</span> <span className="font-bold text-red-600">{p.collectedCards ? p.collectedCards.length : 0}枚</span>
+                      <span className="mx-2 text-slate-300">|</span>
+                      <span className="text-slate-500">失点:</span> <span className="font-bold text-red-600">-{p.score}</span>
+                    </div>
+                  </div>
+                  <div className="p-3">
+                    {p.collectedCards && p.collectedCards.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {[...p.collectedCards].sort((a,b)=>a-b).map((cardNum, i) => (
+                          <Card key={`${p.id}-collected-${i}`} number={cardNum} type="display" small={true} />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-center text-slate-400 text-xs py-2">回収したカードはありません</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -305,7 +353,7 @@ export default function NimmtGame() {
   // UI States
   const [showScoreboard, setShowScoreboard] = useState(false);
   const [showChat, setShowChat] = useState(false);
-  const [showCollected, setShowCollected] = useState(false); // 追加
+  const [showCollected, setShowCollected] = useState(false);
   const [localSelectedCard, setLocalSelectedCard] = useState(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [lastReadIndex, setLastReadIndex] = useState(0);
@@ -414,7 +462,7 @@ export default function NimmtGame() {
             hand: [],
             selectedCard: null,
             isSpectator: false,
-            collectedCards: [] // 追加
+            collectedCards: []
           }
         },
         rows: { 0: [], 1: [], 2: [], 3: [] },
@@ -452,7 +500,7 @@ export default function NimmtGame() {
           hand: [],
           selectedCard: null,
           isSpectator: isSpectator,
-          collectedCards: [] // 追加
+          collectedCards: []
         }
       });
       setLobbyId(targetId);
@@ -498,7 +546,7 @@ export default function NimmtGame() {
           selectedCard: null, 
           score: 0,
           isSpectator: false,
-          collectedCards: [] // リセット
+          collectedCards: []
         };
       });
 
@@ -595,14 +643,12 @@ export default function NimmtGame() {
           }
         }
 
-        // 初期化（もしundefinedなら）
         if (!currentPlayers[uid].collectedCards) currentPlayers[uid].collectedCards = [];
 
         if (bestRow !== -1) {
           if (currentRows[bestRow].length >= MAX_ROW_LENGTH) {
             const pts = calculateRowPoints(currentRows[bestRow]);
             currentPlayers[uid].score += pts;
-            // 回収カードを追加
             currentPlayers[uid].collectedCards.push(...currentRows[bestRow]);
             
             turnMessage = `${name} がバースト！ (${pts}pt)`;
@@ -618,7 +664,6 @@ export default function NimmtGame() {
           }
           const pts = calculateRowPoints(currentRows[targetRow]);
           currentPlayers[uid].score += pts;
-          // 回収カードを追加
           currentPlayers[uid].collectedCards.push(...currentRows[targetRow]);
 
           turnMessage = `${name} が回収しました (${pts}pt)`;
@@ -658,7 +703,6 @@ export default function NimmtGame() {
 
   if (!user) return <div className="h-screen flex items-center justify-center text-slate-400">Loading...</div>;
 
-  // View: Setup (Create/Join)
   if (!lobbyId) {
     return (
       <div className="min-h-screen bg-slate-100 p-4 flex items-center justify-center font-sans">
