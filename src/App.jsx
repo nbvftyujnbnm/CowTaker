@@ -38,7 +38,7 @@ import {
   Send, 
   LogOut, 
   Eye,
-  ThumbsUp // 追加: 投票アイコン
+  ThumbsUp
 } from 'lucide-react';
 
 /* --------------------------------------------------------------------------
@@ -58,6 +58,8 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+
 
 /* --------------------------------------------------------------------------
    Game Constants & Logic Helpers
@@ -513,35 +515,47 @@ export default function NimmtGame() {
   const resolveTurn = async () => {
     if (!gameState || user.uid !== gameState.hostId) return;
     setLoading(true);
+
     try {
       const lobbyRef = doc(db, 'artifacts', appId, 'public', 'data', 'lobbies', lobbyId);
       let currentRows = { ...gameState.rows };
       let currentPlayers = { ...gameState.players };
-      let turnMessage = "";
       
-      const plays = Object.values(currentPlayers)
-        .filter(p => !p.isSpectator && p.selectedCard !== null)
-        .map(p => ({ uid: p.id, card: p.selectedCard }))
+      const activePlayers = Object.values(currentPlayers).filter(p => !p.isSpectator && p.selectedCard !== null);
+      const plays = activePlayers
+        .map(p => ({ uid: p.id, card: p.selectedCard, name: p.name }))
         .sort((a, b) => a.card - b.card);
 
+      await updateDoc(lobbyRef, { message: "集計を開始します..." });
+      
       for (const play of plays) {
-        const { card, uid } = play;
+        // Wait for animation effect
+        await new Promise(resolve => setTimeout(resolve, 1500));
+
+        const { card, uid, name } = play;
         const player = currentPlayers[uid];
+        let turnMessage = `${name} のカード: ${card}`;
+        
         let bestRow = -1, minDiff = 1000;
+        
         for (let i = 0; i < 4; i++) {
-          const last = currentRows[i][currentRows[i].length - 1];
+          const row = currentRows[i];
+          const last = row[row.length - 1];
           if (card > last && (card - last < minDiff)) {
             minDiff = card - last;
             bestRow = i;
           }
         }
+
         if (bestRow !== -1) {
           if (currentRows[bestRow].length >= MAX_ROW_LENGTH) {
             const pts = calculateRowPoints(currentRows[bestRow]);
-            player.score += pts;
-            turnMessage += `${player.name}がバースト(${pts}pt). `;
-            currentRows[bestRow] = [card];
-          } else { currentRows[bestRow] = [...currentRows[bestRow], card]; }
+            currentPlayers[uid].score += pts;
+            turnMessage = `${name} がバースト！ (${pts}pt)`;
+            currentRows[bestRow] = [card]; 
+          } else {
+            currentRows[bestRow] = [...currentRows[bestRow], card];
+          }
         } else {
           let targetRow = 0, minPenalty = 1000;
           for (let i = 0; i < 4; i++) {
@@ -549,25 +563,36 @@ export default function NimmtGame() {
             if (pts < minPenalty) { minPenalty = pts; targetRow = i; }
           }
           const pts = calculateRowPoints(currentRows[targetRow]);
-          player.score += pts;
-          turnMessage += `${player.name}が回収(${pts}pt). `;
+          currentPlayers[uid].score += pts;
+          turnMessage = `${name} が回収しました (${pts}pt)`;
           currentRows[targetRow] = [card];
         }
-        player.selectedCard = null;
+
+        currentPlayers[uid].selectedCard = null;
+
+        await updateDoc(lobbyRef, {
+          rows: currentRows,
+          players: currentPlayers,
+          message: turnMessage
+        });
       }
 
-      const activePlayers = Object.values(currentPlayers).filter(p => !p.isSpectator);
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
       const isGameEnd = activePlayers.length > 0 && activePlayers[0].hand.length === 0;
 
       await updateDoc(lobbyRef, {
-        rows: currentRows,
-        players: currentPlayers,
         status: isGameEnd ? 'finished' : 'playing',
-        message: isGameEnd ? "終了！" : (turnMessage || "ターン完了"),
+        message: isGameEnd ? "ゲーム終了！" : "ターン完了。次のカードを選んでください。",
         round: increment(1)
       });
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
+
+    } catch (e) { 
+      console.error(e);
+      await updateDoc(lobbyRef, { message: "エラーが発生しました。" });
+    } finally { 
+      setLoading(false); 
+    }
   };
 
   /* ------------------------------------------------------------------------
