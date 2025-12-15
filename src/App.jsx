@@ -38,7 +38,8 @@ import {
   Send, 
   LogOut, 
   Eye,
-  ThumbsUp
+  ThumbsUp,
+  Library // 追加: 回収カード一覧用アイコン
 } from 'lucide-react';
 
 /* --------------------------------------------------------------------------
@@ -58,8 +59,6 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-
-
 
 /* --------------------------------------------------------------------------
    Game Constants & Logic Helpers
@@ -97,7 +96,7 @@ const Card = ({ number, type = 'hand', onClick, isSelected, isRevealed = true, s
     rounded-lg border-2 shadow-sm transition-all duration-200 select-none
     ${isSelected ? 'ring-4 ring-blue-500 -translate-y-4 z-10' : 'hover:-translate-y-1'}
     ${type === 'hand' ? 'cursor-pointer' : ''}
-    ${small ? 'w-10 h-14 text-sm' : 'w-14 h-20 sm:w-16 sm:h-24 text-xl sm:text-2xl font-bold'}
+    ${small ? 'w-8 h-11 text-xs' : 'w-14 h-20 sm:w-16 sm:h-24 text-xl sm:text-2xl font-bold'}
     ${!isRevealed ? 'bg-indigo-600 border-indigo-800' : bgColor}
   `;
 
@@ -113,13 +112,13 @@ const Card = ({ number, type = 'hand', onClick, isSelected, isRevealed = true, s
 
   return (
     <div className={baseClasses} onClick={onClick}>
-      <span className="absolute top-1 left-1 text-[10px] leading-none opacity-60">{number}</span>
+      <span className="absolute top-0.5 left-0.5 text-[8px] leading-none opacity-60">{number}</span>
       <span>{number}</span>
       <div className="absolute bottom-1 w-full flex justify-center gap-[1px]">
         {Array.from({ length: Math.min(points, 5) }).map((_, i) => (
-          <div key={i} className={`rounded-full ${small ? 'w-1 h-1' : 'w-1.5 h-1.5'} ${points >= 5 ? 'bg-red-500' : 'bg-slate-400'}`} />
+          <div key={i} className={`rounded-full ${small ? 'w-0.5 h-0.5' : 'w-1.5 h-1.5'} ${points >= 5 ? 'bg-red-500' : 'bg-slate-400'}`} />
         ))}
-        {points > 5 && <span className="text-[8px] leading-none ml-0.5 text-red-600">+{points-5}</span>}
+        {points > 5 && <span className="text-[6px] leading-none ml-0.5 text-red-600">+{points-5}</span>}
       </div>
     </div>
   );
@@ -159,6 +158,54 @@ const ScoreModal = ({ isOpen, onClose, players, myId, votes }) => {
                 </div>
               </div>
               <div className="font-mono font-black text-xl text-indigo-600">-{p.score}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Modal: Collected Cards
+const CollectedCardsModal = ({ isOpen, onClose, players, myId }) => {
+  if (!isOpen) return null;
+  // スコアの悪い順（たくさん取った順）に表示
+  const sortedPlayers = [...players].sort((a, b) => b.score - a.score);
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+      <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+        <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center sticky top-0">
+          <h3 className="font-bold text-slate-700 flex items-center gap-2">
+            <Library size={20} className="text-red-500" /> 回収カード一覧
+          </h3>
+          <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition"><X size={20} className="text-slate-500" /></button>
+        </div>
+        <div className="overflow-y-auto p-4 space-y-4">
+          {sortedPlayers.filter(p => !p.isSpectator).map((p) => (
+            <div key={p.id} className={`rounded-xl border ${p.id === myId ? 'border-indigo-200 bg-indigo-50/50' : 'border-slate-200 bg-white'}`}>
+              <div className="p-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/80 rounded-t-xl">
+                <div className="font-bold text-slate-700 flex items-center gap-2">
+                  {p.name}
+                  {p.id === myId && <span className="text-[10px] bg-indigo-200 text-indigo-800 px-1 rounded">YOU</span>}
+                </div>
+                <div className="text-xs font-mono">
+                  <span className="text-slate-500">回収:</span> <span className="font-bold text-red-600">{p.collectedCards ? p.collectedCards.length : 0}枚</span>
+                  <span className="mx-2 text-slate-300">|</span>
+                  <span className="text-slate-500">失点:</span> <span className="font-bold text-red-600">-{p.score}</span>
+                </div>
+              </div>
+              <div className="p-3">
+                {p.collectedCards && p.collectedCards.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {[...p.collectedCards].sort((a,b)=>a-b).map((cardNum, i) => (
+                      <Card key={`${p.id}-collected-${i}`} number={cardNum} type="display" small={true} />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center text-slate-400 text-xs py-2">回収したカードはありません</div>
+                )}
+              </div>
             </div>
           ))}
         </div>
@@ -258,6 +305,7 @@ export default function NimmtGame() {
   // UI States
   const [showScoreboard, setShowScoreboard] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  const [showCollected, setShowCollected] = useState(false); // 追加
   const [localSelectedCard, setLocalSelectedCard] = useState(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [lastReadIndex, setLastReadIndex] = useState(0);
@@ -365,12 +413,13 @@ export default function NimmtGame() {
             score: 0,
             hand: [],
             selectedCard: null,
-            isSpectator: false
+            isSpectator: false,
+            collectedCards: [] // 追加
           }
         },
         rows: { 0: [], 1: [], 2: [], 3: [] },
         chat: [],
-        votes: {} // 投票用
+        votes: {} 
       });
       setLobbyId(newLobbyId);
     } catch (e) { setError("作成エラー"); }
@@ -402,7 +451,8 @@ export default function NimmtGame() {
           score: 0,
           hand: [],
           selectedCard: null,
-          isSpectator: isSpectator
+          isSpectator: isSpectator,
+          collectedCards: [] // 追加
         }
       });
       setLobbyId(targetId);
@@ -438,7 +488,6 @@ export default function NimmtGame() {
       const newRows = { 0: [deck.pop()], 1: [deck.pop()], 2: [deck.pop()], 3: [deck.pop()] };
       const updatedPlayers = { ...gameState.players };
       
-      // ゲーム開始時は全員プレイヤーとして参加（観戦解除）
       Object.keys(updatedPlayers).forEach(pid => {
         const hand = [];
         for (let k = 0; k < INITIAL_HAND_SIZE; k++) if(deck.length) hand.push(deck.pop());
@@ -448,7 +497,8 @@ export default function NimmtGame() {
           hand, 
           selectedCard: null, 
           score: 0,
-          isSpectator: false 
+          isSpectator: false,
+          collectedCards: [] // リセット
         };
       });
 
@@ -459,7 +509,7 @@ export default function NimmtGame() {
         players: updatedPlayers,
         round: 1,
         message: "ゲーム開始！",
-        votes: {} // 投票リセット
+        votes: {}
       });
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -529,11 +579,9 @@ export default function NimmtGame() {
       await updateDoc(lobbyRef, { message: "集計を開始します..." });
       
       for (const play of plays) {
-        // Wait for animation effect
         await new Promise(resolve => setTimeout(resolve, 1500));
 
         const { card, uid, name } = play;
-        const player = currentPlayers[uid];
         let turnMessage = `${name} のカード: ${card}`;
         
         let bestRow = -1, minDiff = 1000;
@@ -547,10 +595,16 @@ export default function NimmtGame() {
           }
         }
 
+        // 初期化（もしundefinedなら）
+        if (!currentPlayers[uid].collectedCards) currentPlayers[uid].collectedCards = [];
+
         if (bestRow !== -1) {
           if (currentRows[bestRow].length >= MAX_ROW_LENGTH) {
             const pts = calculateRowPoints(currentRows[bestRow]);
             currentPlayers[uid].score += pts;
+            // 回収カードを追加
+            currentPlayers[uid].collectedCards.push(...currentRows[bestRow]);
+            
             turnMessage = `${name} がバースト！ (${pts}pt)`;
             currentRows[bestRow] = [card]; 
           } else {
@@ -564,6 +618,9 @@ export default function NimmtGame() {
           }
           const pts = calculateRowPoints(currentRows[targetRow]);
           currentPlayers[uid].score += pts;
+          // 回収カードを追加
+          currentPlayers[uid].collectedCards.push(...currentRows[targetRow]);
+
           turnMessage = `${name} が回収しました (${pts}pt)`;
           currentRows[targetRow] = [card];
         }
@@ -637,10 +694,14 @@ export default function NimmtGame() {
   const CommonUI = () => (
     <>
       <ScoreModal isOpen={showScoreboard} onClose={() => setShowScoreboard(false)} players={Object.values(gameState.players || {})} myId={user.uid} votes={gameState.votes}/>
+      <CollectedCardsModal isOpen={showCollected} onClose={() => setShowCollected(false)} players={Object.values(gameState.players || {})} myId={user.uid} />
       <ChatModal isOpen={showChat} onClose={() => setShowChat(false)} messages={gameState.chat || []} onSend={sendChatMessage} myId={user.uid} />
       
       {/* Floating Buttons */}
       <div className="fixed top-4 right-4 z-50 flex gap-2">
+        <button onClick={() => setShowCollected(true)} className="p-3 bg-white/90 backdrop-blur text-slate-600 rounded-full shadow-md hover:bg-slate-100 transition relative">
+          <Library size={24} />
+        </button>
         <button onClick={() => setShowScoreboard(true)} className="p-3 bg-white/90 backdrop-blur text-slate-600 rounded-full shadow-md hover:bg-slate-100 transition relative">
           <List size={24} />
         </button>
@@ -722,7 +783,7 @@ export default function NimmtGame() {
         <CommonUI />
         
         {/* Info Header */}
-        <div className="bg-white/90 backdrop-blur-md px-4 py-3 shadow-sm flex justify-between items-center sticky top-0 z-30 pr-24">
+        <div className="bg-white/90 backdrop-blur-md px-4 py-3 shadow-sm flex justify-between items-center sticky top-0 z-30 pr-36">
           <div className="font-bold text-slate-700 text-sm md:text-base flex items-center gap-2">
              <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded text-xs">Round {gameState.round}</span>
              <span className="truncate max-w-[150px] md:max-w-xs">{gameState.message || "ゲーム進行中"}</span>
@@ -831,7 +892,8 @@ export default function NimmtGame() {
                 )}
 
                 <div className="flex gap-2 mt-2">
-                  <button onClick={() => setShowScoreboard(true)} className="flex-1 py-3 bg-white border border-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-50">結果を見る</button>
+                  <button onClick={() => setShowScoreboard(true)} className="flex-1 py-3 bg-white border border-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-50">結果</button>
+                  <button onClick={() => setShowCollected(true)} className="flex-1 py-3 bg-white border border-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-50">カード</button>
                   <button onClick={leaveLobby} className="flex-1 py-3 bg-white border border-slate-200 text-red-500 font-bold rounded-xl hover:bg-red-50">退出</button>
                 </div>
              </div>
